@@ -63,7 +63,7 @@ class(world)
 lati <- c(48.5921923, 45.3772867, 50.3060011)
 long <- c(-68.5915477, -61.0402811, -54.27895)
 sites <- c("St-Lawrence\nEstuary\n(SLE)", 
-           "Scotian Shelf\n(SS)", 
+           "Eastern\nScotian Shelf\n(ESS)", 
            "Northeast\nNewfoundland\nCoast (NNC)")
 
 map.fig <- ggplot(data = world) +
@@ -91,6 +91,7 @@ map.fig
 
 ## Data 
 metaData <- read.table("00_Data/metaData_shrimp.txt", header = T)
+metaData$Origin <- factor(metaData$Origin, levels = c("NNC", "SLE", "ESS"))
 
 counts <- read.table("00_Data/aa.isoforms.counts.54.samples",
                      header = TRUE,
@@ -378,7 +379,7 @@ colnames(pop.express) <- c("Origin", "Module", "Expression")
 pop.express$Module <- factor(pop.express$Module, 
                               levels = paste("O_", levels(as.factor(net$colors)), sep=""))
 levels(pop.express$Module) <- n.DETs.pop$NewName
-pop.express$Origin <- factor(pop.express$Origin, levels = c("NNC", "SLE", "SS"))
+pop.express$Origin <- factor(pop.express$Origin, levels = c("NNC", "SLE", "ESS"))
 
 
 express.pop.plot <- ggplot(subset(pop.express, !Module == "ME_0"), 
@@ -746,6 +747,7 @@ write.csv(res.GO.enrich.pxt,
 # Figure for annotation analyses
 
 df.go.pxt <- subset(res.GO.enrich.pxt, as.numeric(padj) <= 0.05)
+df.go.pxt
 ### no functions detected for population x temperature interaction ###
 
 
@@ -806,7 +808,7 @@ df.go.mod2<- subset(res.GO.enrich.mod2, as.numeric(padj) <= 0.05)
 res.GO.enrich.mod13 <- mat.or.vec(0,0)
 
 # Define vector that is 1 if gene belong to a given meta-modules and 0 otherwise
-mod.temp <- read.table("03_Results/Module_Treatment.txt")
+mod.temp <- read.table("02_Results/Module_Treatment.txt")
 mod.temp.2 <- row.names(subset(mod.temp, net.colors %in% c(1,3)))
 
 tmp <- ifelse(all.genes %in% mod.temp.2, 1, 0)
@@ -1140,15 +1142,17 @@ gi.temp <- gl2gi(gl.temp)
 summary.loci <- summary(gi.temp)
 
 NNC.loc <- poppr::locus_table(gi.temp, pop = "NNC")
-SS.loc <- poppr::locus_table(gi.temp, pop = "SS")
+SS.loc <- poppr::locus_table(gi.temp, pop = "ESS")
 SLE.loc <- poppr::locus_table(gi.temp, pop = "SLE")
 
-he.pop <- data.frame(Population = rep(c("SS", "SLE", "NNC"), each = nrow(NNC.loc)),
+he.pop <- data.frame(Population = rep(c("ESS", "SLE", "NNC"), each = nrow(NNC.loc)),
                      Hexp = c(data.frame(SS.loc)$Hexp,
                               data.frame(SLE.loc)$Hexp,
                               data.frame(NNC.loc)$Hexp))
 
 TukeyHSD(aov(Hexp ~ Population, he.pop))
+
+he.pop$Population <- factor(he.pop$Population, levels = c("NNC", "SLE", "ESS"))
 
 mean.he <- ggplot(he.pop, aes(x = Population, y = Hexp, shape = Population)) +
   stat_summary(fun.data = "mean_se", size = 1, stroke = 1.1) +
@@ -1158,7 +1162,7 @@ mean.he <- ggplot(he.pop, aes(x = Population, y = Hexp, shape = Population)) +
   theme(legend.position = "none",
         axis.text.x = element_text(size = 12),
         plot.margin = margin(2,.5,.3,.5, "cm")) +
-  annotate(geom = "text", x = c("NNC", "SLE", "SS"), y = 0.225,
+  annotate(geom = "text", x = c("NNC", "SLE", "ESS"), y = 0.225,
            label = c("a", "b", "a"), size = 5)
 mean.he
 
@@ -1170,7 +1174,7 @@ mean.he
 env.all <- read_csv("00_Data/Sampling_env_BNAM.csv") %>% 
   dplyr::select(-c(fid, Index, N)) %>%
   data.frame(.)
-row.names(env.all) <- c("SLE", "SS", "NNC")
+row.names(env.all) <- c("SLE", "ESS", "NNC")
 
 ### Remove correlated variables ----
 
@@ -1209,7 +1213,7 @@ pca.env <- rda(env.new[,1:2], scale = T)
 perc <- round(100*(summary(pca.env)$cont$importance[2, 1:2]), 2)
 
 sc_si <- data.frame(scores(pca.env, display="sites", choices=c(1,2)))
-sc_si$Origin <- row.names(sc_si)
+sc_si$Origin <- factor(row.names(sc_si), levels = c("NNC", "SLE", "ESS"))
 sc_sp <- data.frame(scores(pca.env, display="species", choices=c(1,2)))
 rownames(sc_sp) <- c("July surface T\u00B0C", "January\nsurface T\u00B0C")
 sc_sp$Origin <- "NNC"
@@ -1250,7 +1254,7 @@ df.mm$Prop_mort <- 1-(df.mm$n.final/df.mm$n.init)
 df.mm$Treatment <- factor(df.mm$Treatment,
                                   levels = c("2C", "6C", "10C"))
 df.mm$Origin <- factor(df.mm$Origin,
-                               levels = c("NNC", "SLE", "SS"))
+                               levels = c("NNC", "SLE", "ESS"))
 
 aov.mort <- aov(asin(sqrt(Prop_mort)) ~ Treatment*Origin, df.mm)
 anova(aov.mort)
