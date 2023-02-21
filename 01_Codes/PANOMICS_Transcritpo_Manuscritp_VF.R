@@ -4,13 +4,8 @@
 # Subset of 54 individuals
 # Temperature treatment in the lab was used as categorical factor
 # 
-# CL - 2022-03-01
+# CL - 2023
 # 
-
-#-------------------------------------------------------------------------------
-
-rm(list = ls())
-gc()
 
 # Libraries---------------------------------------------------------------------
 
@@ -92,6 +87,7 @@ map.fig
 ## Data 
 metaData <- read.table("00_Data/metaData_shrimp.txt", header = T)
 metaData$Origin <- factor(metaData$Origin, levels = c("NNC", "SLE", "ESS"))
+metaData$Treatment <- factor(metaData$Treatment)
 
 counts <- read.table("00_Data/aa.isoforms.counts.54.samples",
                      header = TRUE,
@@ -99,6 +95,16 @@ counts <- read.table("00_Data/aa.isoforms.counts.54.samples",
 
 metaData <- metaData[with(metaData, order(Origin, Temperature)), ]
 counts <- counts[, match(metaData$ID, colnames(counts))]
+
+## Shrimp size
+
+size <- metaData$Size_mm
+mean(size, na.rm = T)
+sd(size, na.rm = T)
+
+mod.size <- aov(size ~ Treatment + Origin, metaData)
+plot(mod.size)
+summary(mod.size)
 
 ## Pre-filtering
 
@@ -129,12 +135,17 @@ ddsObj <- DESeqDataSetFromMatrix(
 # Normalized data
 count.vst <- vst(ddsObj, blind = T)
 write.csv(assay(count.vst), "02_Results/count_vst_54samples.csv")
-
+write.csv(metaData, "02_Results/metaData_vst_54samples.csv")
 
 # RDA RNA-seq ------------------------------------------------------------------
 
 # Euclidean distance
 dist.count <- vegdist(t(assay(count.vst)), method = "euclidean")
+
+# Tank replicate effect:
+rda.tank <- capscale(dist.count ~ Tank + Condition(Origin * Treatment), metaData)
+RsquareAdj(rda.tank)
+anova.cca(rda.tank)
 
 # Temperature as categorical factor:
 rda.all <- capscale(dist.count ~ Origin + Treatment + Origin:Treatment, metaData)
@@ -176,7 +187,8 @@ pca.plot <- ggplot(pca.df, aes(PC1, PC2, color = Treatment, shape = Origin)) +
   theme_bw() +
   labs(shape = "Origin") +
   labs(colour = "Treatment") +
-  scale_colour_manual(values = c("#006ddb", "#db6d00", "#920000"),
+  # scale_colour_manual(values = c("#006ddb", "#db6d00", "#920000"),
+  scale_colour_manual(values = c("#117733", "#db6d00", "#920000"),
                       labels = c("2\u00B0C", "6\u00B0C", "10\u00B0C")) +
   scale_shape_manual(values = c(8, 19, 17)) +
   theme(
@@ -187,7 +199,7 @@ pca.plot <- ggplot(pca.df, aes(PC1, PC2, color = Treatment, shape = Origin)) +
   )
 pca.plot
 
-ggsave("02_Results/PCA_Temperature.pdf", pca.plot, width = 4, height = 2.5, scale = 1.5)
+# ggsave("02_Results/PCA_Temperature.pdf", pca.plot, width = 4, height = 2.5, scale = 1.5)
 
 
 ## Plot RDA ----
@@ -212,8 +224,8 @@ rda.plot <- ggplot(rda.df, aes(CAP1, CAP2, color = Treatment, shape = Origin)) +
   ylab(paste0("db-RDA2: ", percentVar.rda[2], "%")) +
   theme_bw() +
   labs(shape = "Origin") +
-  labs(colour = "Treatment") +
-  scale_colour_manual(values = c("#006ddb", "#db6d00", "#920000"), 
+  labs(colour = "Temperature") +
+  scale_colour_manual(values = c("#117733", "#db6d00", "#920000"), 
                       labels = c("2\u00B0C", "6\u00B0C", "10\u00B0C")) +
   scale_shape_manual(values = c(8, 19, 17)) +
   theme(
@@ -271,7 +283,7 @@ venn.plot <- plot(euler(s1, shape = "circle"),
 )
 venn.plot
 
-ggsave("02_Results/Venn_DETs_pxt.pdf", venn.plot, width = 3, height = 2, scale = 1.5)
+## ggsave("02_Results/Venn_DETs_pxt.pdf", venn.plot, width = 3, height = 2, scale = 1.5)
 
 
 # Module of co-expression ------------------------------------------------------
@@ -374,10 +386,14 @@ for(i in 2:nrow(n.DETs.pop)){
                            n.DETs.pop[i,2], ")", sep = "")
 }
 
-pop.express <- reshape2::melt(mod.express)
+
+mod.eig <- moduleEigengenes(mod.express, net$colors)
+mod.express1 <- mod.eig$eigengenes
+mod.express1$Origin <- metaData$Origin
+
+pop.express <- reshape2::melt(mod.express1)
 colnames(pop.express) <- c("Origin", "Module", "Expression")
-pop.express$Module <- factor(pop.express$Module, 
-                              levels = paste("O_", levels(as.factor(net$colors)), sep=""))
+levels(pop.express$Module) <- paste("O_", levels(as.factor(net$colors)), sep="")
 levels(pop.express$Module) <- n.DETs.pop$NewName
 pop.express$Origin <- factor(pop.express$Origin, levels = c("NNC", "SLE", "ESS"))
 
@@ -488,12 +504,6 @@ identical(colnames(mod.express), names(net$colors))
 row.names(mod.express) <- metaData$Treatment
 colnames(mod.express) <- paste("T_", net$colors, sep="")
 
-temp.express <- reshape2::melt(mod.express)
-colnames(temp.express) <- c("Treatment", "Module", "Expression")
-temp.express$Module <- factor(temp.express$Module, 
-                              levels = paste("T_", levels(as.factor(net$colors)), sep=""))
-
-
 n.DETs.trt <- data.frame(Name = colnames(mod.express)) %>% 
   group_by(Name) %>% summarise(count = n())
 n.DETs.trt$NewName <- "NA"
@@ -503,14 +513,24 @@ for(i in 2:nrow(n.DETs.trt)){
                            n.DETs.trt[i,2], ")", sep = "")
 }
 
-levels(temp.express$Module) <- n.DETs.trt$NewName
 
-express.trt.plot <- ggplot(subset(temp.express, !Module == "ME_0"), 
+mod.eig <- moduleEigengenes(mod.express, net$colors)
+mod.express1 <- mod.eig$eigengenes
+mod.express1$Treatment <- metaData$Treatment
+
+trt.express <- reshape2::melt(mod.express1)
+colnames(trt.express) <- c("Treatment", "Module", "Expression")
+levels(trt.express$Module) <- paste("O_", levels(as.factor(net$colors)), sep="")
+levels(trt.express$Module) <- n.DETs.trt$NewName
+trt.express$Treatment <- factor(trt.express$Treatment, levels = c("02C", "06C", "10C"))
+
+
+express.trt.plot <- ggplot(subset(trt.express, !Module == "ME_0"), 
                            aes(x = Treatment, y = scale(Expression))) +
   stat_summary(fun.data = mean_se, geom = "pointrange") +
-  xlab("Treatment") +
-  ylab(paste0("Mean relative expression")) +
-  scale_x_discrete(labels = c("2\u00B0C", "6\u00B0C", "10\u00B0C")) +
+  xlab("Temperature (\u00B0C)") +
+  ylab(paste0("Eigengenes")) +
+  scale_x_discrete(labels = c("2", "6", "10")) +
   facet_wrap(~ Module, scales = "free", ncol = 1) + 
   theme_bw() +
   theme(axis.line = element_line(colour = "black"),
@@ -522,7 +542,7 @@ express.trt.plot <- ggplot(subset(temp.express, !Module == "ME_0"),
         strip.background = element_blank(),
         strip.text.x = element_text(hjust = 0)
   ) +
-  ggtitle("Treatment") 
+  ggtitle("Temperature") 
 
 express.trt.plot
 
@@ -700,187 +720,187 @@ plot.go.temp <- ggplot(df.go.temp, aes(order, padj_log, fill=ontology)) +
 
 plot.go.temp
 
-### For Population x Temperature interaction ----
-
-res.GO.enrich.pxt <- mat.or.vec(0,0)
-
-# Define vector that is 1 if gene belong to a given meta-modules and 0 otherwise
-tmp <- ifelse(all.genes %in% pxt.genes, 1, 0)
-geneList <- tmp
-
-# geneList needs names that match those for GO terms,
-names(geneList) <- unlist(all.genes, function(x)x[1])
-
-ontology <- c("BP", "CC", "MF")
-
-for (i in 1:3) {  
-  # Create topGOdata object:
-  GOdata <- new("topGOdata",
-                ontology = ontology[i],
-                allGenes = geneList,
-                geneSelectionFun = function(x)(x == 1),
-                annot = annFUN.gene2GO, gene2GO = gene2GO)
-  
-  # Run Fisher’s Exact Test:
-  resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
-  tab <- GenTable(GOdata, raw.p.value = resultFisher, topNodes = length(resultFisher@score),
-                  numChar = 120)
-  tab$padj <- p.adjust(tab$raw.p.value, method = "fdr")
-  
-  # Retrieve transcript id related to a GO.ID
-  allGO = genesInTerm(GOdata)
-  go2gene.total <- c(go2gene.total, allGO)
-  
-  ## - creat table restults
-  rm(temp)
-  temp <- tab
-  #  temp <- subset(tab, padj <= 0.1)
-  temp$ontology <- ontology[i]
-  
-  ## res.GO.enrich.pxt<- mat.or.vec(0,0)
-  res.GO.enrich.pxt<- rbind(res.GO.enrich.pxt, temp)
-}
-
-write.csv(res.GO.enrich.pxt,
-          "02_Results/Results_GO_Enrich_PxT.csv")
-
-# Figure for annotation analyses
-
-df.go.pxt <- subset(res.GO.enrich.pxt, as.numeric(padj) <= 0.05)
-df.go.pxt
-### no functions detected for population x temperature interaction ###
-
-
-### For ME_2 treatment: genes that are upregulated in warmer temperature ----
-
-res.GO.enrich.mod2 <- mat.or.vec(0,0)
-
-# Define vector that is 1 if gene belong to a given meta-modules and 0 otherwise
-mod.temp <- read.table("02_Results/Module_Treatment.txt")
-mod.temp.2 <- row.names(subset(mod.temp, net.colors == 2))
-
-tmp <- ifelse(all.genes %in% mod.temp.2, 1, 0)
-geneList <- tmp
-
-# geneList needs names that match those for GO terms,
-names(geneList) <- unlist(all.genes, function(x)x[1])
-
-ontology <- c("BP", "CC", "MF")
-
-for (i in 1:3) {  
-  # Create topGOdata object:
-  GOdata <- new("topGOdata",
-                ontology = ontology[i],
-                allGenes = geneList,
-                geneSelectionFun = function(x)(x == 1),
-                annot = annFUN.gene2GO, gene2GO = gene2GO)
-  
-  # Run Fisher’s Exact Test:
-  resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
-  tab <- GenTable(GOdata, raw.p.value = resultFisher, topNodes = length(resultFisher@score),
-                  numChar = 120)
-  tab$padj <- p.adjust(tab$raw.p.value, method = "fdr")
-  
-  # Retrieve transcript id related to a GO.ID
-  allGO = genesInTerm(GOdata)
-  go2gene.total <- c(go2gene.total, allGO)
-  
-  ## - creat table restults
-  rm(temp)
-  temp <- tab
-  #  temp <- subset(tab, padj <= 0.1)
-  temp$ontology <- ontology[i]
-  
-  ## res.GO.enrich.pxt<- mat.or.vec(0,0)
-  res.GO.enrich.mod2 <- rbind(res.GO.enrich.mod2, temp)
-}
-
-write.csv(res.GO.enrich.mod2,
-          "02_Results/Results_GO_Enrich_Module2_trt.csv")
-
-# Figure for annotation analyses
-
-df.go.mod2<- subset(res.GO.enrich.mod2, as.numeric(padj) <= 0.05)
-### no functions detected for module 2 ###
-
-### For ME_1 and 3 treatment: genes that are upregulated in warmer temperature ----
-
-res.GO.enrich.mod13 <- mat.or.vec(0,0)
-
-# Define vector that is 1 if gene belong to a given meta-modules and 0 otherwise
-mod.temp <- read.table("02_Results/Module_Treatment.txt")
-mod.temp.2 <- row.names(subset(mod.temp, net.colors %in% c(1,3)))
-
-tmp <- ifelse(all.genes %in% mod.temp.2, 1, 0)
-geneList <- tmp
-
-# geneList needs names that match those for GO terms,
-names(geneList) <- unlist(all.genes, function(x)x[1])
-
-ontology <- c("BP", "CC", "MF")
-
-for (i in 1:3) {  
-  # Create topGOdata object:
-  GOdata <- new("topGOdata",
-                ontology = ontology[i],
-                allGenes = geneList,
-                geneSelectionFun = function(x)(x == 1),
-                annot = annFUN.gene2GO, gene2GO = gene2GO)
-  
-  # Run Fisher’s Exact Test:
-  resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
-  tab <- GenTable(GOdata, raw.p.value = resultFisher, topNodes = length(resultFisher@score),
-                  numChar = 120)
-  tab$padj <- p.adjust(tab$raw.p.value, method = "fdr")
-  
-  # Retrieve transcript id related to a GO.ID
-  allGO = genesInTerm(GOdata)
-  go2gene.total <- c(go2gene.total, allGO)
-  
-  ## - creat table restults
-  rm(temp)
-  temp <- tab
-  #  temp <- subset(tab, padj <= 0.1)
-  temp$ontology <- ontology[i]
-  
-  ## res.GO.enrich.pxt<- mat.or.vec(0,0)
-  res.GO.enrich.mod13 <- rbind(res.GO.enrich.mod13, temp)
-}
-
-write.csv(res.GO.enrich.mod13,
-          "02_Results/Results_GO_Enrich_Module13_trt.csv")
-
-# Figure for annotation analyses
-
-df.go.mod13<- subset(res.GO.enrich.mod13, as.numeric(padj) <= 0.05)
-
-df.go.mod13$padj_log <- log10(as.numeric(df.go.mod13$padj)) * (-1)
-
-df.go.mod13 <- subset(df.go.mod13, padj_log >= 0.1) %>% 
-  arrange(ontology, padj_log) %>%
-  mutate(order = row_number())
-
-plot.go.mod13 <- ggplot(df.go.mod13, aes(order, padj_log, fill=ontology)) + 
-  geom_col()  + 
-  scale_fill_brewer(palette = "Dark2") + 
-  xlab("") +
-  ylab(expression(paste("-log10(", italic("P"),"-value)"))) +
-  labs(fill = "Ontology") +
-  coord_flip() +
-  theme_classic()+
-  theme(
-    strip.background = element_rect(fill= "gray100"),
-    strip.text.y = element_text(angle = 180+90, size = 12),
-    legend.position = "right",
-    axis.text = element_text(colour="black")
-  ) +
-  scale_x_continuous(
-    breaks = df.go.mod13$order,
-    labels = df.go.mod13$Term,
-    expand = c(0,0)
-  )
-
-plot.go.mod13
+# ### For Population x Temperature interaction ----
+# 
+# res.GO.enrich.pxt <- mat.or.vec(0,0)
+# 
+# # Define vector that is 1 if gene belong to a given meta-modules and 0 otherwise
+# tmp <- ifelse(all.genes %in% pxt.genes, 1, 0)
+# geneList <- tmp
+# 
+# # geneList needs names that match those for GO terms,
+# names(geneList) <- unlist(all.genes, function(x)x[1])
+# 
+# ontology <- c("BP", "CC", "MF")
+# 
+# for (i in 1:3) {  
+#   # Create topGOdata object:
+#   GOdata <- new("topGOdata",
+#                 ontology = ontology[i],
+#                 allGenes = geneList,
+#                 geneSelectionFun = function(x)(x == 1),
+#                 annot = annFUN.gene2GO, gene2GO = gene2GO)
+#   
+#   # Run Fisher’s Exact Test:
+#   resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+#   tab <- GenTable(GOdata, raw.p.value = resultFisher, topNodes = length(resultFisher@score),
+#                   numChar = 120)
+#   tab$padj <- p.adjust(tab$raw.p.value, method = "fdr")
+#   
+#   # Retrieve transcript id related to a GO.ID
+#   allGO = genesInTerm(GOdata)
+#   go2gene.total <- c(go2gene.total, allGO)
+#   
+#   ## - creat table restults
+#   rm(temp)
+#   temp <- tab
+#   #  temp <- subset(tab, padj <= 0.1)
+#   temp$ontology <- ontology[i]
+#   
+#   ## res.GO.enrich.pxt<- mat.or.vec(0,0)
+#   res.GO.enrich.pxt<- rbind(res.GO.enrich.pxt, temp)
+# }
+# 
+# write.csv(res.GO.enrich.pxt,
+#           "02_Results/Results_GO_Enrich_PxT.csv")
+# 
+# # Figure for annotation analyses
+# 
+# df.go.pxt <- subset(res.GO.enrich.pxt, as.numeric(padj) <= 0.05)
+# df.go.pxt
+# ### no functions detected for population x temperature interaction ###
+# 
+# 
+# ### For ME_2 treatment: genes that are upregulated in warmer temperature ----
+# 
+# res.GO.enrich.mod2 <- mat.or.vec(0,0)
+# 
+# # Define vector that is 1 if gene belong to a given meta-modules and 0 otherwise
+# mod.temp <- read.table("02_Results/Module_Treatment.txt")
+# mod.temp.2 <- row.names(subset(mod.temp, net.colors == 2))
+# 
+# tmp <- ifelse(all.genes %in% mod.temp.2, 1, 0)
+# geneList <- tmp
+# 
+# # geneList needs names that match those for GO terms,
+# names(geneList) <- unlist(all.genes, function(x)x[1])
+# 
+# ontology <- c("BP", "CC", "MF")
+# 
+# for (i in 1:3) {  
+#   # Create topGOdata object:
+#   GOdata <- new("topGOdata",
+#                 ontology = ontology[i],
+#                 allGenes = geneList,
+#                 geneSelectionFun = function(x)(x == 1),
+#                 annot = annFUN.gene2GO, gene2GO = gene2GO)
+#   
+#   # Run Fisher’s Exact Test:
+#   resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+#   tab <- GenTable(GOdata, raw.p.value = resultFisher, topNodes = length(resultFisher@score),
+#                   numChar = 120)
+#   tab$padj <- p.adjust(tab$raw.p.value, method = "fdr")
+#   
+#   # Retrieve transcript id related to a GO.ID
+#   allGO = genesInTerm(GOdata)
+#   go2gene.total <- c(go2gene.total, allGO)
+#   
+#   ## - creat table restults
+#   rm(temp)
+#   temp <- tab
+#   #  temp <- subset(tab, padj <= 0.1)
+#   temp$ontology <- ontology[i]
+#   
+#   ## res.GO.enrich.pxt<- mat.or.vec(0,0)
+#   res.GO.enrich.mod2 <- rbind(res.GO.enrich.mod2, temp)
+# }
+# 
+# write.csv(res.GO.enrich.mod2,
+#           "02_Results/Results_GO_Enrich_Module2_trt.csv")
+# 
+# # Figure for annotation analyses
+# 
+# df.go.mod2<- subset(res.GO.enrich.mod2, as.numeric(padj) <= 0.05)
+# ### no functions detected for module 2 ###
+# 
+# ### For ME_1 and 3 treatment: genes that are upregulated in warmer temperature ----
+# 
+# res.GO.enrich.mod13 <- mat.or.vec(0,0)
+# 
+# # Define vector that is 1 if gene belong to a given meta-modules and 0 otherwise
+# mod.temp <- read.table("02_Results/Module_Treatment.txt")
+# mod.temp.2 <- row.names(subset(mod.temp, net.colors %in% c(1,3)))
+# 
+# tmp <- ifelse(all.genes %in% mod.temp.2, 1, 0)
+# geneList <- tmp
+# 
+# # geneList needs names that match those for GO terms,
+# names(geneList) <- unlist(all.genes, function(x)x[1])
+# 
+# ontology <- c("BP", "CC", "MF")
+# 
+# for (i in 1:3) {  
+#   # Create topGOdata object:
+#   GOdata <- new("topGOdata",
+#                 ontology = ontology[i],
+#                 allGenes = geneList,
+#                 geneSelectionFun = function(x)(x == 1),
+#                 annot = annFUN.gene2GO, gene2GO = gene2GO)
+#   
+#   # Run Fisher’s Exact Test:
+#   resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+#   tab <- GenTable(GOdata, raw.p.value = resultFisher, topNodes = length(resultFisher@score),
+#                   numChar = 120)
+#   tab$padj <- p.adjust(tab$raw.p.value, method = "fdr")
+#   
+#   # Retrieve transcript id related to a GO.ID
+#   allGO = genesInTerm(GOdata)
+#   go2gene.total <- c(go2gene.total, allGO)
+#   
+#   ## - creat table restults
+#   rm(temp)
+#   temp <- tab
+#   #  temp <- subset(tab, padj <= 0.1)
+#   temp$ontology <- ontology[i]
+#   
+#   ## res.GO.enrich.pxt<- mat.or.vec(0,0)
+#   res.GO.enrich.mod13 <- rbind(res.GO.enrich.mod13, temp)
+# }
+# 
+# write.csv(res.GO.enrich.mod13,
+#           "02_Results/Results_GO_Enrich_Module13_trt.csv")
+# 
+# # Figure for annotation analyses
+# 
+# df.go.mod13<- subset(res.GO.enrich.mod13, as.numeric(padj) <= 0.05)
+# 
+# df.go.mod13$padj_log <- log10(as.numeric(df.go.mod13$padj)) * (-1)
+# 
+# df.go.mod13 <- subset(df.go.mod13, padj_log >= 0.1) %>% 
+#   arrange(ontology, padj_log) %>%
+#   mutate(order = row_number())
+# 
+# plot.go.mod13 <- ggplot(df.go.mod13, aes(order, padj_log, fill=ontology)) + 
+#   geom_col()  + 
+#   scale_fill_brewer(palette = "Dark2") + 
+#   xlab("") +
+#   ylab(expression(paste("-log10(", italic("P"),"-value)"))) +
+#   labs(fill = "Ontology") +
+#   coord_flip() +
+#   theme_classic()+
+#   theme(
+#     strip.background = element_rect(fill= "gray100"),
+#     strip.text.y = element_text(angle = 180+90, size = 12),
+#     legend.position = "right",
+#     axis.text = element_text(colour="black")
+#   ) +
+#   scale_x_continuous(
+#     breaks = df.go.mod13$order,
+#     labels = df.go.mod13$Term,
+#     expand = c(0,0)
+#   )
+# 
+# plot.go.mod13
 
 
 # Modules of co-expression and Functionnal analyses ----------------------------
@@ -894,7 +914,7 @@ enrich.pop <- subset(res.GO.enrich.pop, padj <= 0.05) %>%
   mutate(group = "Origin")
 
 enrich.temp <- subset(res.GO.enrich.temp, padj <= 0.05) %>%
-  mutate(group = "Treatment")
+  mutate(group = "Temperature")
 
 enrich.all <- rbind(enrich.pop, enrich.temp)
 enrich.all$padj_log <- log10(enrich.all$padj)*(-1)
@@ -945,7 +965,7 @@ mod.pop$transcript <- row.names(mod.pop)
 mod.temp$transcript <- row.names(mod.temp)
 
 mod.pop$group <- "Origin"
-mod.temp$group <- "Treatment"
+mod.temp$group <- "Temperature"
 
 modules.all <- rbind(mod.pop, mod.temp)
 modules.all$net.colors <- paste(modules.all$group, modules.all$net.colors, sep="-")
@@ -969,13 +989,13 @@ df.go.det <- left_join(df.go.det, modules.all)
 
 modules.go.df <- left_join(df.go.det, go.subset, by = c("GO" = "GO.ID", 
                                                         "group" = "group"))
-mod.subset <- subset(modules.go.df, !net.colors %in% c("Origin-0", "Treatment-0"))
+mod.subset <- subset(modules.go.df, !net.colors %in% c("Origin-0", "Temperature-0"))
 mod.subset <- subset(mod.subset, !Term == "NA")
 
 mod.subset$net.colors <- factor(mod.subset$net.colors,
                                 levels = c("Origin", 
                                            levels(factor(mod.subset$net.colors))[1:6],
-                                           "", "Treatment",
+                                           "", "Temperature",
                                            levels(factor(mod.subset$net.colors))[7:9]))
 
 df.onto.mod <- mod.subset %>% group_by(GO, net.colors, Term, ontology) %>% 
@@ -996,7 +1016,7 @@ plot.bp.2 <- ggplot(mod.subset, aes(order)) +
                     labels = c("Origin", 
                                paste("O_", 1:6, sep = ""),
                                "",
-                               "Treatment", 
+                               "Temperature", 
                                paste("T_", 1:3, sep = ""))) + 
   xlab("") +
   ylab("Proportion of transcripts") +
@@ -1035,7 +1055,6 @@ fig.enrich <- ggarrange(plot.bp.1, plot.bp.2,
 fig.enrich
 
 
-
 # Disentangling origin effect --------------------------------------------------
 
 ## Genetic variation -----------------------------------------------------------
@@ -1045,7 +1064,7 @@ vcf.all <- read.vcfR("00_Data/populations.22227snps.94ind.n2HW.single.recode.vcf
 gl.all  <- vcfR::vcfR2genlight(vcf.all) 
 
 temp.ID <- metaData$ID_GQ
-meta.temp <- subset(metaData, !ID_GQ == "TPB085")
+meta.temp <- subset(metaData, !ID_GQ == "TPB085") # bad sequencing quality for genomics
 
 # genlight object
 gl.temp  <- gl.all[indNames(gl.all) %in% temp.ID]
@@ -1059,7 +1078,7 @@ rownames(gen.temp) <- plyr::mapvalues(rownames(gen.temp),
                                       from = metaData$ID_GQ, 
                                       to = metaData$ID)
 
-## Re-order accroding to metaData
+## Re-order according to metaData
 gen.temp <- gen.temp[match(meta.temp$ID, row.names(gen.temp)),]
 
 identical(rownames(gen.temp), meta.temp$ID)
@@ -1123,13 +1142,7 @@ plot.fst <- ggarrange(dendro, p, heights = c(.3,1),
 plot.fst
 
 
-## allele frequency by pop
-gi.temp <- gl2gi(gl.temp)
-pop(gi.temp) <- meta.temp$Origin
 
-genpop.temp <- genind2genpop(gi.temp)
-
-freq.pop <- makefreq(genpop.temp)
 
 # ## dartR
 # 
@@ -1166,6 +1179,7 @@ mean.he <- ggplot(he.pop, aes(x = Population, y = Hexp, shape = Population)) +
            label = c("a", "b", "a"), size = 5)
 mean.he
 
+he.pop %>% group_by(Population) %>% summarise(mean = mean(Hexp))
 
 
 ## Sampling environmental conditions --------------------------------------------
@@ -1187,13 +1201,13 @@ env.cor.plot <- ggcorrplot(cor.env, method = "circle",
                            hc.order = F, type = "lower",
                            outline.col = "white", 
                            legend.title = expression(Correlation~italic(r)),
-                           tl.cex = 18) +
+                           tl.cex = 18,
+                           show.diag = T) +
   theme(legend.title = element_text(size=18),
         legend.text = element_text(size=15),
         legend.key.size = unit(1.5, "cm"))
 
 env.cor.plot
-
 
 cor_matrix_rm <- cor.env                 # Modify correlation matrix
 cor_matrix_rm[upper.tri(cor_matrix_rm)] <- 0
@@ -1204,18 +1218,25 @@ env.new <- env[ , !apply(cor_matrix_rm,    # Remove highly correlated variables
                          function(x) any(abs(x) > 0.90))]
 env.new
 
+## Select bottom instead of surface temperature for the two same months
+## as more reliable to the species biology
+
+env.new <- env[,c("T_Jul_Bott", "T_Jan_Bott")]
+
+cor(env.new)
+
 # Euclidean distance
 vegdist(env.new[,1:2], method = "euclidean")
 
 # PCA plot
-pca.env <- rda(env.new[,1:2], scale = T)
+pca.env <- rda(env.new, scale = T)
 
 perc <- round(100*(summary(pca.env)$cont$importance[2, 1:2]), 2)
 
 sc_si <- data.frame(scores(pca.env, display="sites", choices=c(1,2)))
 sc_si$Origin <- factor(row.names(sc_si), levels = c("NNC", "SLE", "ESS"))
 sc_sp <- data.frame(scores(pca.env, display="species", choices=c(1,2)))
-rownames(sc_sp) <- c("July surface T\u00B0C", "January\nsurface T\u00B0C")
+rownames(sc_sp) <- c("July\nbottom T\u00B0C", "January\nbottom T\u00B0C")
 sc_sp$Origin <- "NNC"
 
 pca.enviro.plot <- ggplot(sc_si, aes(PC1, PC2, shape = Origin)) +
@@ -1241,8 +1262,8 @@ pca.enviro.plot <- ggplot(sc_si, aes(PC1, PC2, shape = Origin)) +
   ) +
   annotate("text", x = sc_sp$PC1, y = sc_sp$PC2,
            label = rownames(sc_sp), col = "black",
-           vjust = c(-0.6,0.2), hjust = c(0.5,1.2)) +
-  ylim(-1, 1.6) + xlim(-1.5, 1.2)
+            vjust = c(0.5,0.2), hjust = c(1,1.2)) +
+  ylim(-1.1, 1.5) + xlim(-1.2, 1.2)
 
 pca.enviro.plot
 
@@ -1264,22 +1285,27 @@ aov.molt <- aov(asin(sqrt(molt_rate)) ~ Treatment*Origin, df.mm)
 anova(aov.molt)
 TukeyHSD(aov.molt)
 
-# glm.mort <- glm(Prop_mort ~ Treatment * Origin, df.mm,
-#                family = "quasibinomial",
-#                weights = n.init)
-# car::Anova(glm.mort)
-# 
-# pairwise.mort<- lsmeans::lsmeans(glm.mort, ~ Treatment)
-# multcomp::cld(pairwise.mort, Letters = letters, adjust = "bonferroni")
-# 
-# 
-# glm.molt <- glm(molt_rate ~ Treatment * Origin, df.mm,
-#                 family = "quasibinomial",
-#                 weights = mean_n)
-# car::Anova(glm.molt)
-# 
-# pairwise.molt <- lsmeans::lsmeans(glm.molt, ~ Treatment:Origin)
-# multcomp::cld(pairwise.molt, Letters = letters, adjust = "bonferroni")
+df <- df.mm
+df$Tank <- as.factor(df$Tank)
+gpa_mixed = lmerTest::lmer(asin(sqrt(molt_rate)) ~ Treatment*Origin + (1 | Tank), data = df.mm)
+anova(gpa_mixed)
+
+
+df.mm$TxO <- paste(df.mm$Treatment, df.mm$Origin, sep = "_")
+aov.molt2 <- aov(asin(sqrt(molt_rate)) ~ TxO, df.mm)
+test.res <- agricolae::HSD.test(aov.molt2, "TxO", console = T)
+
+
+mean.molt <- df.mm %>% group_by(Origin, Treatment) %>%
+  summarise(mean_molt = mean(molt_rate),
+            se_molt = sd(molt_rate) / sqrt(length(molt_rate)))
+mean.molt
+
+mean.mort <- df.mm %>% group_by(Treatment) %>%
+  summarise(mean_mort = mean(Prop_mort),
+            se_mort = sd(Prop_mort) / sqrt(length(Prop_mort)))
+mean.mort
+
 
 ### plot physiology
 
@@ -1294,20 +1320,17 @@ subset.melted$variable <- factor(subset.melted$variable,
 subset.mortality <- subset(subset.melted, variable == "Prop_mort")
 
 plot.mortality <- ggplot(subset.mortality) +
-  # geom_smooth(method = "glm", 
-  #             aes(x = as.numeric(Treatment), y = value),
-  #             col = "darkgrey", linetype = "dashed", alpha = 0.25) +
   geom_point(aes(x = Treatment, y = value,
                  color = Treatment, shape = Origin),
              position = position_jitter(0.1), size = 3) +
-  scale_colour_manual(values = c("#006ddb", "#db6d00", "#920000"), 
-                      labels = c("2\u00B0C", "6\u00B0C", "10\u00B0C")) +
+  scale_colour_manual(values = c("#117733", "#db6d00", "#920000"), 
+                      labels = c("2", "6", "10")) +
   scale_shape_manual(values = c(8, 19, 17)) +
   guides(color = "none") +
   theme_classic() +
-  scale_x_discrete(labels = c("2\u00B0C", "6\u00B0C", "10\u00B0C")) +
+  scale_x_discrete(labels = c("2", "6", "10")) +
   scale_y_continuous(labels=scaleFUN, n.breaks = 4) +
-  ylab("Mortality rate") + xlab("Treatment") +
+  ylab("Mortality rate") + xlab("Temperature (\u00B0C)")  +
   annotate(geom = "text", x = c("2C", "6C", "10C"), y = 0.26,
            label = c("a", "ab", "b"), size = 4)
 
@@ -1315,23 +1338,27 @@ plot.mortality
 
 subset.molting <- subset(subset.melted, variable == "molt_rate")
 
-plot.molting <- ggplot(subset.molting) +
-  geom_smooth(method = "glm", 
-              aes(x = as.numeric(Treatment), y = value, 
-                  linetype = Origin),
-              col = "darkgrey", alpha = 0.25) +
-  geom_point(aes(x = Treatment, y = value,
+df.temp <- subset.molting[,c("Origin", "Treatment", "value")] %>%
+  group_by(Origin, Treatment) %>% mutate(value = mean(value)) %>% unique()
+tukey.res <- test.res$groups
+tukey.res$Treatment <- str_split_fixed(row.names(tukey.res), "_", n = 2)[,1]
+tukey.res$Origin <- str_split_fixed(row.names(tukey.res), "_", n = 2)[,2]
+tukey.res <- left_join(tukey.res, df.temp)
+
+plot.molting <- ggplot() +
+  geom_point(data = subset.molting, aes(x = Treatment, y = value,
                  color = Treatment, shape = Origin),
              position = position_jitter(0.1), size = 3) +
-  scale_colour_manual(values = c("#006ddb", "#db6d00", "#920000"), 
-                      labels = c("2\u00B0C", "6\u00B0C", "10\u00B0C")) +
+  scale_colour_manual(values = c("#117733", "#db6d00", "#920000"), 
+                      labels = c("2", "6", "10")) +
   scale_shape_manual(values = c(8, 19, 17)) +
   guides(color = "none") +
   theme_classic() +
-  scale_x_discrete(labels = c("2\u00B0C", "6\u00B0C", "10\u00B0C")) +
+  scale_x_discrete(labels = c("2", "6", "10")) +
   scale_y_continuous(labels=scaleFUN, n.breaks = 4) +
-  scale_linetype_manual(values = c("dashed", "dashed", "dashed"))+
-  ylab("Molting rate") + xlab("Treatment")
+  ylab("Molting rate") + xlab("Temperature (\u00B0C)") +
+  geom_text(data = tukey.res, aes(x = Treatment, y = value, 
+                           label = groups), nudge_x = -0.3)
 
 plot.molting
 
@@ -1367,30 +1394,9 @@ tempo <- left_join(metaData, fst.score)
 fst.mat <- as.matrix(tempo[,grep("Axis", colnames(tempo))])
 row.names(fst.mat) <- tempo$ID
 
-# Molting data
-# Enviro vs molting
-df.mm$Temperature <- rep(c(10,2,6), each = 2, time = 3)
-
-df.molting <- df.mm %>% group_by(Origin) %>%
-  summarise(Molting = coef(aov(asin(sqrt(molt_rate)) ~ Temperature))[2])
-
-env.new$Origin <- rownames(env.new)
-env.molt <- left_join(env.new, df.molting)
-row.names(env.molt) <- env.molt$Origin
-env.molt <- as.matrix(env.molt[colnames(env.molt) != "Origin"])
-
-molting <- data.frame(Origin = rownames(env.molt),
-                        Molting = data.frame(env.molt)$Molting)
-tempo <- left_join(metaData, molting)
-molting.mat <- as.matrix(tempo[,grep("Molting", colnames(tempo))])
-row.names(molting.mat) <- tempo$ID
-
-
-
 ## Variation partitioning 
 identical(rownames(rna.mat), rownames(env.mat))
 identical(rownames(rna.mat), rownames(fst.mat))
-identical(rownames(rna.mat), rownames(molting.mat))
 
 Treatment <- model.matrix(~ 0 + metaData$Treatment)
 
@@ -1404,34 +1410,16 @@ mod0 <- capscale(dist.rna.mat ~ 1)
 mod1 <- capscale(dist.rna.mat ~ Treatment + env.mat + Treatment:env.mat +
                    Treatment + fst.mat + Treatment:fst.mat, scale = T)
 
-res <- ordiR2step(mod0, mod1, direction = "both", permutations = 999)
-res
+# res <- ordistep(mod0, mod1, direction = "both", permutations = 999)
+# res$anova
+
+res <- ordiR2step(mod0, mod1, permutations = 999)
 res$anova
 
 sel.osR2_adj <- res
 sel.osR2_adj$anova$`Pr(>F)` <- p.adjust (res$anova$`Pr(>F)`, method = 'holm', n = 6)
 sel.osR2_adj$anova
 
-# # install.packages ('gtools')
-# sel.fs$pval.adj.stars <- gtools::stars.pval (pval.adj)
-# sel.fs
-
-## model select molting ----
-df.mm <- left_join(df.mm, fst.score)
-df.mm <- left_join(df.mm, env.new)
-
-molt_rate <- df.mm$molt_rate
-trt_molt <- df.mm$Treatment
-gen_molt <- df.mm$Axis.1
-env_molt <- ape::pcoa(vegdist(df.mm[,10:11], method = "euclidean"))$vector
-
-molt0 <- rda(molt_rate ~ 1)
-molt1 <- rda(molt_rate ~ trt_molt + env_molt + trt_molt:env_molt +
-               trt_molt + gen_molt + trt_molt:gen_molt)
-
-mod.select.molt <- ordiR2step(molt0, molt1, direction = "both", permutations = 999)
-mod.select.molt$anova
-p.adjust (mod.select.molt$anova$`Pr(>F)`, method = 'holm', n = 6)
 
 ### Var partition
 
@@ -1451,7 +1439,7 @@ gen <- mm[,6]
 res.varpart <- varpart(rna.mat, trt, env, gen)
 res.varpart
 
-plot(res.varpart)
+##plot(res.varpart)
 
 anova.cca(capscale(dist.rna.mat ~ Treatment))
 anova.cca(capscale(dist.rna.mat ~ env.mat))
@@ -1462,9 +1450,17 @@ anova.cca(capscale(dist.rna.mat ~ fst.mat))
 # Figures ----------------------------------------------------------------------
 
 ## Fig_1 sampling map
-ggsave("02_Results/Fig1_Map.pdf", map.fig, width = 4, height = 2.5, scale = 1.75)  
+ggsave("02_Results/Fig1_Map.jpeg", map.fig, width = 8, height = 5, scale = 2,
+       units = "cm")  
 
-## Fig_2 gene expression
+
+# Fig2 mortality and molting rate
+ggsave("02_Results/Fig2_mort_molt_raw_data.jpg", 
+       fig.physio + theme(plot.background = element_rect(fill = "white")),
+       width = 8, height = 3.5, scale = 2,
+       units = "cm")
+
+## Fig_3 gene expression
 rda.plot1 <- ggarrange(rda.plot, labels = "A.", hjust = 0.25) +
   theme(plot.margin = margin(0.5,0.5,0, 1, "cm")) 
 
@@ -1476,17 +1472,16 @@ fig.express <- ggarrange(express.trt.plot, NULL, express.pop.plot, NULL,
                          hjust = c(0.25, -0.5, -1, -0.5)) +
   theme(plot.margin = margin(0.5,0.5,0.5,1, "cm")) 
 
-fig2 <- ggarrange(rda.plot1, fig.express,
+fig3 <- ggarrange(rda.plot1, fig.express,
                   labels = "",
                   nrow = 2, heights = c(1, 1.5))
-fig2
-ggsave("02_Results/Fig2_Gene_expression.pdf", fig2, 
-       width = 5, height = 5.5, scale = 1.5)  
+fig3
+ggsave("02_Results/Fig3_Gene_expression.jpg", 
+       fig3 + theme(plot.background = element_rect(fill = "white")), 
+       width = 8.5, height = 8.5, scale = 2.1,
+       units = "cm")
 
-
-# Fig3 mortality and molting rate
-ggsave("02_Results/Fig3_mort_molt_raw_data.pdf", fig.physio,
-       width = 5, height = 2.5, scale = 1.5)
+       ##width = 5, height = 5.5, scale = 1.5)  
 
 
 # Fig4 genetic variation
@@ -1496,18 +1491,106 @@ fig.gen <- ggarrange(mean.he, plot.fst,
           vjust = 3)
 fig.gen
 
-ggsave("02_Results/Fig4_genetic_diversity.pdf", fig.gen,
-       width = 5, height = 2.5, scale = 1.5)
+ggsave("02_Results/Fig4_genetic_diversity.jpg", 
+       fig.gen + theme(plot.background = element_rect(fill = "white")),
+       width = 8, height = 4, scale = 2,
+       units = "cm")
 
 # Fig5 Environment at origin
-ggsave("02_Results/Fig5_PCA_env.pdf", pca.enviro.plot,
-       width = 3, height = 2, scale = 1.5)
+ggsave("02_Results/Fig5_PCA_env.jpg", pca.enviro.plot,
+       width = 7, height = 3.5, scale = 2.3,
+       units = "cm")
 
 
 # Fig_S1 Gene expression and modules
 ggsave("02_Results/Supp_Fig1_GO_Modules_all.pdf", fig.enrich,
-       width = 8, height = 5.5, scale = 1.5)
+       width = 8, height = 4, scale = 1.5)
 
 # Fig_S2
-ggsave("02_Results/Supp_Fig2_Env_correlation.pdf", env.cor.plot,
-       width = 4.5, height = 4, scale = 3)
+
+library(gridExtra)
+
+env.table <- env.all[,c(6:41)]
+
+env.cor <- cor(env.table)
+
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+
+  upper_tri <- get_upper_tri(env.cor)
+  upper_tri
+
+  # Melt the correlation matrix
+  melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+  # Heatmap
+ggheatmap <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+    geom_tile(color = "white")+
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                         midpoint = 0, limit = c(-1,1), space = "Lab", 
+                         name="Pearson\nCorrelation") +
+    theme_minimal()+ 
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                     size = 11, hjust = 1))+
+#    coord_fixed() + 
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.ticks = element_blank(),
+    legend.justification = c(1, 0),
+    legend.position = c(0.6, 0.7),
+    legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                               title.position = "top", title.hjust = 0.5))+ 
+  scale_y_discrete(guide = guide_axis(position = "none"))
+
+ggheatmap  
+
+
+env.table <- round(env.all[,c(6:41)]) %>% format(nsmall = 2) %>% t() %>% data.frame()
+
+env.reshap <- data.frame(Origin = rep(c("SLE","ESS","NNC"), each = nrow(env.table)),
+                         Name = rep(rownames(env.table), 3),
+                         Value = c(env.table$SLE, env.table$ESS, env.table$NNC))
+env.reshap$Name <- factor(env.reshap$Name,
+                          levels = rownames(env.table))
+
+df.table <- ggplot(env.reshap, aes(x = Origin, y = Name,
+                           label = Value)) +
+  geom_text(size = 3.5, hjust = 1) + 
+  theme_minimal() + 
+  theme(panel.grid.major = element_blank(), legend.position = "none",
+        panel.border = element_blank(), 
+        axis.text.x =  element_text(colour = "black", size = 14, hjust = 1),
+        axis.text.y = element_text(size = 11, hjust = 0),
+        axis.ticks =  element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank()) +
+  scale_x_discrete(guide = guide_axis(position = "top")) +
+  scale_y_discrete(guide = guide_axis(position = "right"))
+df.table
+
+fig.cor.env <- ggarrange(df.table + 
+                           theme(plot.margin = margin(r = 1, l = 36)),
+                         ggheatmap +
+                           theme(plot.margin = margin(r = 12, l = 0)), 
+                         ncol = 2,
+          widths = c(1,2.2),
+          labels = c("A.","B."),
+       #   hjust = c(0, -2),
+          align = "h")
+fig.cor.env
+
+ggsave("02_Results/Supp_Fig2_Env_correlation.pdf", fig.cor.env,
+       width = 5, height = 3, scale = 2)
